@@ -1,46 +1,61 @@
 import streamlit as st
 from pptx import Presentation
-from pptx.util import Inches
-import pytesseract
-from PIL import Image
+from pptx.util import Inches, Pt
+import fitz  # PyMuPDF
 import io
 
-st.set_page_config(page_title="Convertidor NotebookLM a PPTX", layout="centered")
+st.set_page_config(page_title="PDF a PowerPoint Editable", page_icon="📊")
 
-st.title("🖼️ De Imagen a PowerPoint Editable")
-st.write("Sube la imagen que te dio NotebookLM y te daré un archivo .pptx")
+st.title("📊 Convertidor de PDF (NotebookLM) a PPTX")
+st.write("Sube el PDF que te dio NotebookLM y lo convertiré en un PowerPoint editable.")
 
-uploaded_file = st.file_uploader("Elige una imagen...", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Elige tu archivo PDF", type="pdf")
 
 if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, caption='Imagen subida', use_column_width=True)
-    
-    if st.button('Generar PowerPoint'):
-        with st.spinner('Leyendo texto...'):
-            # 1. Extraer texto de la imagen
-            # Nota: Streamlit Cloud ya tiene librerías de OCR instaladas
-            texto_extraido = pytesseract.image_to_string(image, lang='spa')
-            
-            # 2. Crear el PowerPoint
+    if st.button("Generar PowerPoint"):
+        with st.spinner("Convirtiendo páginas..."):
+            # Crear presentación
             prs = Presentation()
-            slide_layout = prs.slide_layouts[5] # Slide en blanco
-            slide = prs.slides.add_slide(slide_layout)
             
-            # Añadir el texto extraído
-            textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(5))
-            tf = textbox.text_frame
-            tf.text = texto_extraido
+            # Abrir el PDF desde la memoria
+            pdf_data = uploaded_file.read()
+            doc = fitz.open(stream=pdf_data, filetype="pdf")
             
-            # 3. Guardar en memoria para descargar
+            for page in doc:
+                # 1. Extraer imagen de la página para el fondo
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                img_data = pix.tobytes("png")
+                
+                # 2. Crear slide
+                slide_layout = prs.slide_layouts[6] # Blanco
+                slide = prs.slides.add_slide(slide_layout)
+                
+                # 3. Poner la imagen de fondo (no editable)
+                img_stream = io.BytesIO(img_data)
+                slide.shapes.add_picture(img_stream, 0, 0, width=prs.slide_width, height=prs.slide_height)
+                
+                # 4. Extraer texto y ponerlo encima (editable)
+                text_blocks = page.get_text("blocks")
+                for b in text_blocks:
+                    left = Inches(b[0] / 72)
+                    top = Inches(b[1] / 72)
+                    width = Inches((b[2] - b[0]) / 72)
+                    height = Inches((b[3] - b[1]) / 72)
+                    
+                    txBox = slide.shapes.add_textbox(left, top, width, height)
+                    tf = txBox.text_frame
+                    tf.text = b[4]
+                    tf.word_wrap = True
+
+            # Guardar
             pptx_io = io.BytesIO()
             prs.save(pptx_io)
             pptx_io.seek(0)
             
-            st.success("¡Listo! Tu PowerPoint está preparado.")
+            st.success("¡Listo!")
             st.download_button(
-                label="📥 Descargar PowerPoint",
+                label="📥 Descargar PowerPoint Editable",
                 data=pptx_io,
-                file_name="notebook_editable.pptx",
+                file_name="presentacion_editable.pptx",
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
